@@ -1,4 +1,4 @@
-マニュアルチェックリスト生成用プロンプト (シート単位 AI 呼び出し)。"""
+"""マニュアルチェックリスト生成用プロンプト (シート単位 AI 呼び出し)。"""
 from __future__ import annotations
 
 import json
@@ -11,18 +11,18 @@ CATEGORIES = ["記入漏れ", "整合性"]
 
 SYSTEM = """あなたは臨床試験の Data Manager (DM) です。SDV 前に DM が目視確認すべきチェックポイントを抽出してください。
 
-# 出力カテゴリ (この 2 つのみ使用)
+# 出力カテゴリ (必ず以下の 2 つのいずれかの文字列を `category` に設定すること)
 - 記入漏れ: EDC で必須化されていないが、条件付きで入力されているべき項目の入力漏れ確認
 - 整合性: 単一フォーム内の項目間整合性 (日付ペアの前後・選択肢と他項目の連動・SAE 報告の整合 など)
 
 # 重要なルール
-- target_field は **`ラベル(field名)` 形式** (例: `投与量(field3)`) で **必ず 1 件のみ** 指定してください。複数項目に関わる整合性は、主たる 1 項目を target に置き、文中で他項目を言及してください。
+- target_field は必ず **`ラベル(field名)` 形式** (例: `投与量(field3)`) で **1件のみ** 出力してください。
 - target_field に指定できるのは、candidate_items に含まれる field/label のみ。存在しないフィールドを推測・創作しないでください。
 - フォーム横断のチェックは出力しないでください (このフォーム単独で完結するもののみ)。
 - 自由記述 (text)・薬剤コーディング (drug)・MedDRA コーディング (meddra)・Note は対象外です (candidate_items に含まれません)。
 - `has_default: true` の項目は記入漏れチェックの対象外です。
 - 各シート 1〜5 件程度に絞り、汎用的すぎる注意喚起は避けてください。該当チェックがない場合は空配列を返してください。
-- 出力は JSON スキーマ準拠で、**文法的に正しく、自然で正確な日本語**で記述してください。曖昧な機械翻訳調や文字化けした文字列は出力しないでください。
+- 出力は JSON スキーマ準拠で、文法的に正しく、自然で正確な日本語で記述してください。
 """
 
 
@@ -59,6 +59,7 @@ def build_user_prompt(sheet: Sheet) -> str:
     )
 
 
+# test_scenario.py と同等のシンプルなスキーマに変更
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -67,15 +68,8 @@ SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "category": {
-                        "type": "string",
-                        "enum": ["記入漏れ", "整合性"],
-                        "description": "『記入漏れ』または『整合性』のいずれかを必ず指定。",
-                    },
-                    "target_field": {
-                        "type": "string",
-                        "description": "対象フィールドを `ラベル(field名)` 形式 (例: `投与量(field3)`) で 1 件のみ指定。",
-                    },
+                    "category": {"type": "string"},
+                    "target_field": {"type": "string"},
                     "check_point": {"type": "string"},
                     "rationale": {"type": "string"},
                     "severity": {"type": "string", "enum": ["high", "medium", "low"]},
