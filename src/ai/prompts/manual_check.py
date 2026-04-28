@@ -5,9 +5,7 @@ import json
 
 from ...parser.models import Sheet
 
-
 CATEGORIES = ["記入漏れ", "整合性"]
-
 
 SYSTEM = """あなたは臨床試験の Data Manager (DM) です。SDV 前に DM が目視確認すべきチェックポイントを抽出してください。
 
@@ -16,9 +14,10 @@ SYSTEM = """あなたは臨床試験の Data Manager (DM) です。SDV 前に DM
 - 整合性: 単一フォーム内の項目間整合性 (日付ペアの前後・選択肢と他項目の連動・SAE 報告の整合 など)
 
 # 重要なルール
+- **【最重要】必須化されている項目の除外**: candidate_items の中で **`required: true` または `has_default: true` となっている項目に対して「記入漏れ」のチェックを作成しないでください。** これらはシステムで制御されているため、目視確認リストに含める必要はありません。
 - target_field は `ラベル(field名)` の形式で 1 件のみ指定してください。
-- 出力は必ず指定された JSON のみを出力してください。Markdown の修飾 (```json など) や前後の挨拶は一切不要です。
-- severity は "high", "medium", "low" のいずれかを指定してください。
+- 出力は必ず指定された JSON のみを出力してください。Markdown の修飾や挨拶は一切不要です。
+- 各シート 1〜5 件程度に絞り、該当がない場合は空の配列 `[]` を返してください。
 
 # 出力例
 {
@@ -33,7 +32,6 @@ SYSTEM = """あなたは臨床試験の Data Manager (DM) です。SDV 前に DM
   ]
 }
 """
-
 
 def _candidate_items(sheet: Sheet) -> list[dict]:
     items: list[dict] = []
@@ -50,23 +48,21 @@ def _candidate_items(sheet: Sheet) -> list[dict]:
                 "field": fi.name,
                 "label": fi.label,
                 "type": fi.field_type,
-                "required": v.presence is not None,
+                "required": v.presence is not None, # AIがこれを見て判断します
                 "has_default": bool(fi.default_value),
                 "has_numericality": v.numericality is not None,
             }
         )
     return items
 
-
 def build_user_prompt(sheet: Sheet) -> str:
     items = _candidate_items(sheet)
     payload = {"sheet_name": sheet.name, "candidate_items": items}
     return (
         "次の CRF フォームについて、DM が SDV 前に目視確認すべきチェックポイントを抽出してください。\n"
-        "観点は『記入漏れ』『整合性』の 2 カテゴリのみとし、該当がない場合は空の配列を返してください。\n\n"
+        "『required: true』の項目に対する記入漏れチェックは絶対に含めないでください。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
-
 
 SCHEMA = {
     "type": "object",
