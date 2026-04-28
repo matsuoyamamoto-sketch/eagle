@@ -1,0 +1,20 @@
+# Core
+streamlit>=1.36
+pydantic>=2.7
+pydantic-settings>=2.3
+python-dotenv>=1.0
+
+# Data / Excel / Word
+pandas>=2.2
+openpyxl>=3.1
+python-docx>=1.1
+
+# AI (Cohere)
+cohere>=5.5
+tenacity>=8.3
+
+# Logging
+structlog>=24.1
+
+# Test
+pytest>=8.2
