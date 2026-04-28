@@ -1,5 +1,6 @@
 # Core
 streamlit>=1.36
+streamlit-local-storage>=0.0.24
 pydantic>=2.7
 pydantic-settings>=2.3
 python-dotenv>=1.0
