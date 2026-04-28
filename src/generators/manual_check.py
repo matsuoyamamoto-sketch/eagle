@@ -1,6 +1,7 @@
 """マニュアルチェックリスト (Excel) 生成 — Cohere 利用。"""
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 from typing import Callable
@@ -62,10 +63,17 @@ def generate_check_points(
             on_progress(i, total, sheet.name)
         try:
             data = client.chat_json(P.SYSTEM, P.build_user_prompt(sheet), P.SCHEMA)
+            valid_fields = {fi.name for fi in sheet.field_items if fi.type != "FieldItem::Note"}
             for cp in data.get("check_points", []):
                 # ターゲットフィールドが特定されていないチェックは除外
                 tgt = cp.get("target_fields")
                 if not tgt or (isinstance(tgt, list) and not [t for t in tgt if t]):
+                    continue
+                # フォームに存在しない field を参照している (AI のハルシネーション) は除外
+                referenced = re.findall(r"field\d+", " ".join(tgt) if isinstance(tgt, list) else str(tgt))
+                if referenced and any(f not in valid_fields for f in referenced):
+                    continue
+                if not referenced:
                     continue
                 out.append({"sheet": sheet.name, **cp})
         except Exception as e:
