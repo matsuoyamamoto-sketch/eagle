@@ -133,7 +133,25 @@ def generate_check_points(
             CATEGORY_ORDER.get(cp.get("category", ""), 99),
         )
     )
+
+    # 1 ターゲットフィールド = 1 行 に展開 (横断チェックは構造的に複数 target を保持)
+    out = _expand_one_target_per_row(out)
     return out
+
+
+def _expand_one_target_per_row(rows: list[dict]) -> list[dict]:
+    expanded: list[dict] = []
+    for cp in rows:
+        if cp.get("sheet") == CROSS_SHEET_LABEL:
+            expanded.append(cp)
+            continue
+        targets = cp.get("target_fields") or []
+        if not isinstance(targets, list) or len(targets) <= 1:
+            expanded.append(cp)
+            continue
+        for t in targets:
+            expanded.append({**cp, "target_fields": [t]})
+    return expanded
 
 
 def generate_unit_digit_checks(study: Study, selected_sheet_names: list[str]) -> list[dict]:
