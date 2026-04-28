@@ -48,6 +48,10 @@ def _severity_fill(sev: str) -> PatternFill | None:
     return {"high": FILL_HIGH, "medium": FILL_MID, "low": FILL_LOW}.get(sev)
 
 
+CATEGORY_ORDER = {"記入漏れ": 0, "単位・桁数": 1, "整合性": 2}
+CROSS_SHEET_LABEL = "(横断)"
+
+
 def generate_check_points(
     study: Study,
     selected_sheet_names: list[str],
@@ -87,7 +91,80 @@ def generate_check_points(
                     "severity": "low",
                 }
             )
+
+    # フォーム横断チェック (決定論)
+    out.extend(generate_cross_sheet_checks(study, selected_sheet_names))
+
+    # 並び順: シート順 → カテゴリ順 (横断は末尾)
+    sheet_order = {s.name: i for i, s in enumerate(study.sheets)}
+    out.sort(
+        key=lambda cp: (
+            len(sheet_order) if cp.get("sheet") == CROSS_SHEET_LABEL else sheet_order.get(cp.get("sheet", ""), 9999),
+            CATEGORY_ORDER.get(cp.get("category", ""), 99),
+        )
+    )
     return out
+
+
+def _sheet_signature(sheet: Sheet) -> tuple:
+    """visit-replicated 判定用の構造シグネチャ (field_name + label の集合)。"""
+    return tuple(sorted((fi.name, fi.label) for fi in sheet.field_items if fi.type != "FieldItem::Note"))
+
+
+def generate_cross_sheet_checks(study: Study, selected_sheet_names: list[str]) -> list[dict]:
+    """visit 順に並ぶ同構造シート (visit-replicated) の同項目について、
+    日付の前後関係・重複入力 (数値/日付のみ) チェックを決定論的に生成する。"""
+    selected = set(selected_sheet_names)
+    # 同シグネチャ (= 親フォームのコピー) ごとに sheets をグルーピング
+    groups: dict[tuple, list[Sheet]] = {}
+    for sheet in study.sheets:
+        if sheet.name not in selected:
+            continue
+        sig = _sheet_signature(sheet)
+        if not sig:
+            continue
+        groups.setdefault(sig, []).append(sheet)
+
+    checks: list[dict] = []
+    for sheets in groups.values():
+        if len(sheets) < 2:
+            # 共通シート (症例登録票・同意取得など) は横断対象外
+            continue
+        # study.sheets の出現順 = visit 順 (parser がそのまま並べる前提)
+        order_index = {s.name: study.sheets.index(s) for s in sheets}
+        sheets_sorted = sorted(sheets, key=lambda s: order_index[s.name])
+        # field_name + label が一致する項目を、最初のシートの field_items 順で走査
+        first = sheets_sorted[0]
+        for fi in first.field_items:
+            if fi.type == "FieldItem::Note" or not fi.field_type:
+                continue
+            is_date = fi.field_type == "date"
+            is_numeric = fi.validators.numericality is not None
+            if not (is_date or is_numeric):
+                continue
+            targets = [f"{fi.label}({fi.name})[{s.name}]" for s in sheets_sorted]
+            if is_date:
+                checks.append(
+                    {
+                        "sheet": CROSS_SHEET_LABEL,
+                        "category": "日付前後関係",
+                        "target_fields": targets,
+                        "check_point": "訪問順に日付が前後関係に矛盾なく入力されているか確認する。",
+                        "rationale": "visit 間で同一項目の日付が逆転していないかを目視確認する。",
+                        "severity": "high",
+                    }
+                )
+            checks.append(
+                {
+                    "sheet": CROSS_SHEET_LABEL,
+                    "category": "重複入力",
+                    "target_fields": targets,
+                    "check_point": "訪問間で同一の値が連続して入力されていないか (コピペ・記入誤りの疑い) を確認する。",
+                    "rationale": "visit 間で値が完全一致する場合は転記ミスやコピー入力の可能性がある。",
+                    "severity": "medium",
+                }
+            )
+    return checks
 
 
 def build_manual_check_workbook(study: Study, points: list[dict]) -> Workbook:

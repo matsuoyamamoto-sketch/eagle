@@ -3,56 +3,57 @@ from __future__ import annotations
 
 import json
 
-from ...parser.models import Sheet
+from ...parser.models import Sheet, Study
 
 
-SYSTEM = """あなたは臨床試験の Data Manager (DM) です。
-EDC システム上で機械的な制約 (validators) ではカバーできない、目視確認すべきポイントを抽出してください。
-特に注目すべきポイント:
-- 自由記述項目 (text) における表記ゆれ・記入漏れ
-- 併用薬と有害事象、AE と原疾患の整合性 など、フォーム横断の妥当性
-- SOC/PT (MedDRA) のコーディング妥当性
-- 単位や桁数、日付の整合性
+SYSTEM = """あなたは臨床試験の Data Manager (DM) です。SDV 前に DM が目視確認すべきチェックポイントを抽出してください。
 
-出力は必ず指定された JSON スキーマに従い、日本語で記述してください。
+# 出力カテゴリ (この 3 つのみ使用)
+- 記入漏れ: EDC の必須設定では捕まらないが、条件付きで入力されているべき項目の入力漏れ確認
+- 単位・桁数: 数値項目の単位・桁数の妥当性 (numericality 範囲内でも臨床的に疑わしい値の確認)
+- 整合性: 単一フォーム内の項目間整合性 (日付ペアの前後・選択肢と他項目の連動・SAE 報告の整合 など)
 
 # 重要なルール
-- target_fields には **必ず 1 つ以上の具体的な対象フィールドを `ラベル(field名)` の形式 (例: `投与量(field3)`) で指定**してください。
-- **target_fields に指定できるのは、ユーザーから提示された candidate_items に含まれる field と label のみ**です。candidate_items に存在しないフィールド名・ラベルを絶対に出力しないでください (推測・創作禁止)。
-- candidate_items が空または対象とできるチェックがない場合は、check_points を空配列で返してください。
-- 対象フィールドが特定できないチェックポイントは出力しないでください (汎用的な注意喚起は不要)。
-- Note (注釈) 項目自体はチェック対象外とし、target_fields に含めないでください。
-- `has_default: true` の項目は初期値が入力済みのため、「表記ゆれ」「記入漏れ」のチェックポイントは出力しないでください (整合性・コーディング妥当性などの他観点は可)。
+- target_fields は **`ラベル(field名)` 形式** (例: `投与量(field3)`) で 1 件以上指定。
+- target_fields に指定できるのは、**candidate_items に含まれる field/label のみ**です。存在しないフィールドを推測・創作しないでください。
+- 上記 3 カテゴリ以外は出力しないでください。フォーム横断の整合性は別途決定論的に生成するため、出力に含めないでください。
+- 自由記述項目 (text)・薬剤コーディング (drug)・MedDRA コーディング (meddra)・Note は対象外です (candidate_items に含まれません)。
+- `has_default: true` の項目は初期値が入力済みのため、記入漏れチェックの対象に含めないでください。
+- 出力は JSON スキーマ準拠、日本語で記述してください。
+- 該当するチェックがない場合は check_points を空配列にしてください。
 """
 
 
-def build_user_prompt(sheet: Sheet) -> str:
-    items = []
+def _candidate_items(sheet: Sheet) -> list[dict]:
+    items: list[dict] = []
     for fi in sheet.field_items:
-        # Note 項目はチェック対象外
         if fi.type == "FieldItem::Note":
             continue
-        # field_type が未設定の項目はチェック対象外
         if not fi.field_type:
             continue
-        # 制約がない/弱い項目を中心に拾う
-        v = fi.validators
-        is_freetext = (fi.field_type == "text") and not v.numericality and not v.formula
-        if not (is_freetext or fi.field_type in ("drug", "meddra", "sae_report")):
+        if fi.field_type in ("text", "drug", "meddra"):
             continue
+        v = fi.validators
         items.append(
             {
                 "field": fi.name,
                 "label": fi.label,
                 "type": fi.field_type,
+                "required": v.presence is not None,
                 "has_default": bool(fi.default_value),
+                "has_numericality": v.numericality is not None,
                 "description": fi.description or None,
             }
         )
+    return items
+
+
+def build_user_prompt(sheet: Sheet, study: Study | None = None) -> str:
+    items = _candidate_items(sheet)
     payload = {"sheet_name": sheet.name, "candidate_items": items}
     return (
-        "次の CRF フォームについて、DM 担当者が目視確認すべきチェックポイントを抽出してください。\n"
-        "機械的な validator では検出できない問題を中心に、最低 3 件挙げてください。\n\n"
+        "次の CRF フォームについて、DM が SDV 前に目視確認すべきチェックポイントを抽出してください。\n"
+        "観点は『記入漏れ / 単位・桁数 / 整合性』の 3 カテゴリのみです。\n\n"
         f"```json\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n```"
     )
 
@@ -65,11 +66,14 @@ SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "category": {"type": "string", "description": "整合性 / 表記 / コーディング 等"},
+                    "category": {
+                        "type": "string",
+                        "enum": ["記入漏れ", "単位・桁数", "整合性"],
+                    },
                     "target_fields": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "対象フィールドを `ラベル(field名)` の形式 (例: `投与量(field3)`) で 1 件以上指定すること。",
+                        "description": "対象フィールドを `ラベル(field名)` 形式 (例: `投与量(field3)`) で 1 件以上。",
                     },
                     "check_point": {"type": "string"},
                     "rationale": {"type": "string"},
