@@ -61,7 +61,6 @@ SCHEMA = {
                     "target_fields": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "minItems": 1,
                         "description": "対象フィールド名 (field1 等)。最低 1 件は必ず指定すること。",
                     },
                     "check_point": {"type": "string"},
