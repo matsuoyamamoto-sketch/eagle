@@ -77,10 +77,10 @@ st.markdown("##### ② 生成するドキュメントの選択")
 
 DOCS = [
     ("spec",     "EDC仕様書 (Excel)",            False, False),
-    ("vplan",    "バリデーションプラン (Word)",   False, True),
+    ("vplan",    "バリデーションプラン (Word)",   False, False),
     ("echeck",   "エディットチェック確認書 (Excel)", False, False),
-    ("scenario", "テストシナリオ (Excel)",        True,  True),
-    ("manual",   "マニュアルチェックリスト (Excel)", True, True),
+    ("scenario", "テストシナリオ (Excel)",        True,  False),
+    ("manual",   "マニュアルチェックリスト (Excel)", True, False),
 ]
 
 cols = st.columns(2)
