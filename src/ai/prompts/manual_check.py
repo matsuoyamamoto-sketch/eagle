@@ -11,18 +11,27 @@ CATEGORIES = ["記入漏れ", "整合性"]
 
 SYSTEM = """あなたは臨床試験の Data Manager (DM) です。SDV 前に DM が目視確認すべきチェックポイントを抽出してください。
 
-# 出力カテゴリ (必ず以下の 2 つのいずれかの文字列を `category` に設定すること)
+# 出力カテゴリ
 - 記入漏れ: EDC で必須化されていないが、条件付きで入力されているべき項目の入力漏れ確認
 - 整合性: 単一フォーム内の項目間整合性 (日付ペアの前後・選択肢と他項目の連動・SAE 報告の整合 など)
 
 # 重要なルール
-- target_field は必ず **`ラベル(field名)` 形式** (例: `投与量(field3)`) で **1件のみ** 出力してください。
-- target_field に指定できるのは、candidate_items に含まれる field/label のみ。存在しないフィールドを推測・創作しないでください。
-- フォーム横断のチェックは出力しないでください (このフォーム単独で完結するもののみ)。
-- 自由記述 (text)・薬剤コーディング (drug)・MedDRA コーディング (meddra)・Note は対象外です (candidate_items に含まれません)。
-- `has_default: true` の項目は記入漏れチェックの対象外です。
-- 各シート 1〜5 件程度に絞り、汎用的すぎる注意喚起は避けてください。該当チェックがない場合は空配列を返してください。
-- 出力は JSON スキーマ準拠で、文法的に正しく、自然で正確な日本語で記述してください。
+- target_field は `ラベル(field名)` の形式で 1 件のみ指定してください。
+- 出力は必ず指定された JSON のみを出力してください。Markdown の修飾 (```json など) や前後の挨拶は一切不要です。
+- severity は "high", "medium", "low" のいずれかを指定してください。
+
+# 出力例
+{
+  "check_points": [
+    {
+      "category": "整合性",
+      "target_field": "同意取得日(field1)",
+      "check_point": "同意取得日が生年月日より後か確認する。",
+      "rationale": "年齢要件の確認のため。",
+      "severity": "high"
+    }
+  ]
+}
 """
 
 
@@ -54,12 +63,11 @@ def build_user_prompt(sheet: Sheet) -> str:
     payload = {"sheet_name": sheet.name, "candidate_items": items}
     return (
         "次の CRF フォームについて、DM が SDV 前に目視確認すべきチェックポイントを抽出してください。\n"
-        "観点は『記入漏れ / 整合性』の 2 カテゴリのみ、フォーム単独で完結するチェックに限定します。\n\n"
-        f"```json\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n```"
+        "観点は『記入漏れ』『整合性』の 2 カテゴリのみとし、該当がない場合は空の配列を返してください。\n\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
 
-# test_scenario.py と同等のシンプルなスキーマに変更
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -72,7 +80,7 @@ SCHEMA = {
                     "target_field": {"type": "string"},
                     "check_point": {"type": "string"},
                     "rationale": {"type": "string"},
-                    "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+                    "severity": {"type": "string"},
                 },
                 "required": ["category", "target_field", "check_point", "rationale", "severity"],
             },
