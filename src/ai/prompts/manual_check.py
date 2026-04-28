@@ -67,7 +67,10 @@ SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "category": {"type": "string", "enum": CATEGORIES},
+                    "category": {
+                        "type": "string",
+                        "description": "『記入漏れ』または『整合性』のいずれかを必ず指定。",
+                    },
                     "target_fields": {
                         "type": "array",
                         "items": {"type": "string"},

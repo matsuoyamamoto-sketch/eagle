@@ -62,15 +62,23 @@ def generate_check_points(
     total = len(target_sheets)
     client = client or CohereJSONClient()
 
+    ai_skip = False
+    consecutive_errors = 0
     for i, sheet in enumerate(target_sheets, start=1):
         if on_progress:
             on_progress(i, total, sheet.name)
         valid_fields = {fi.name for fi in sheet.field_items if fi.type != "FieldItem::Note"}
 
-        # AI: 記入漏れ + 整合性
+        # AI: 記入漏れ + 整合性 (連続エラー時は以降スキップして決定論パートだけ実行)
+        if ai_skip:
+            out.extend(_unit_digit_checks_for_sheet(sheet))
+            continue
         try:
             data = client.chat_json(P.SYSTEM, P.build_user_prompt(sheet), P.SCHEMA)
+            consecutive_errors = 0
             for cp in data.get("check_points", []):
+                if cp.get("category") not in P.CATEGORIES:
+                    continue
                 tgt = cp.get("target_fields")
                 if not tgt or (isinstance(tgt, list) and not [t for t in tgt if t]):
                     continue
@@ -89,6 +97,7 @@ def generate_check_points(
                     }
                 )
         except Exception as e:
+            consecutive_errors += 1
             out.append(
                 {
                     "sheet": sheet.name,
@@ -99,6 +108,9 @@ def generate_check_points(
                     "severity": "low",
                 }
             )
+            # 連続 2 件以上 AI が失敗した場合は以降の AI 呼び出しを諦める
+            if consecutive_errors >= 2:
+                ai_skip = True
 
         # 決定論: 単位・桁数
         out.extend(_unit_digit_checks_for_sheet(sheet))
