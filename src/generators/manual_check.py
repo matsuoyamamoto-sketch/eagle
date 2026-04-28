@@ -79,10 +79,12 @@ def generate_check_points(
             for cp in data.get("check_points", []):
                 if cp.get("category") not in P.CATEGORIES:
                     continue
-                tgt = cp.get("target_fields")
-                if not tgt or (isinstance(tgt, list) and not [t for t in tgt if t]):
+                
+                # --- ここを修正：AI側のスキーマ変更に合わせて単数形で取得 ---
+                tgt_str = cp.get("target_field")
+                if not tgt_str:
                     continue
-                tgt_str = " ".join(tgt) if isinstance(tgt, list) else str(tgt)
+                
                 referenced = re.findall(r"field\d+", tgt_str)
                 if not referenced or any(f not in valid_fields for f in referenced):
                     continue
@@ -90,7 +92,7 @@ def generate_check_points(
                     {
                         "sheet": sheet.name,
                         "category": cp.get("category", ""),
-                        "target_fields": tgt,
+                        "target_fields": [tgt_str], # 後続のExcel処理のために配列に入れて渡す
                         "check_point": cp.get("check_point", ""),
                         "rationale": cp.get("rationale", ""),
                         "severity": cp.get("severity", "medium"),
