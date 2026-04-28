@@ -20,7 +20,7 @@ st.set_page_config(page_title="EAGLE", page_icon="📄", layout="centered")
 _EM = "color:#1F3864;font-weight:800;font-size:1.35em;"
 st.markdown(
     f"""
-<h3 style='margin-bottom:0.25rem;'>📄 EAGLE
+<h3 style='margin-bottom:0.25rem;'>📄 <span style='color:#1F3864;font-weight:800;'>EAGLE</span>
 <span style='font-size:0.75em;color:#475569;font-weight:500;margin-left:8px;'>
 (<span style='{_EM}'>E</span>DC
 <span style='{_EM}'>A</span>uto
