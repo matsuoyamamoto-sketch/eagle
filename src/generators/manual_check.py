@@ -48,7 +48,7 @@ def _severity_fill(sev: str) -> PatternFill | None:
     return {"high": FILL_HIGH, "medium": FILL_MID, "low": FILL_LOW}.get(sev)
 
 
-CATEGORY_ORDER = {"記入漏れ": 0, "単位・桁数": 1, "整合性": 2}
+CATEGORY_ORDER = {"記入漏れ": 0, "単位・桁数": 1, "整合性": 2, "日付前後関係": 3, "重複入力": 4}
 CROSS_SHEET_LABEL = "(横断)"
 
 
@@ -58,41 +58,71 @@ def generate_check_points(
     client: CohereJSONClient | None = None,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> list[dict]:
+    """マニュアルチェックリスト生成。
+
+    AI はスタディ全体で 1 回だけ呼び出し『記入漏れ / 整合性』を抽出。
+    『単位・桁数』および『横断』は決定論で生成する。
+    """
     client = client or CohereJSONClient()
-    target = [s for s in study.sheets if s.name in selected_sheet_names]
     out: list[dict] = []
-    total = len(target)
-    for i, sheet in enumerate(target, start=1):
-        if on_progress:
-            on_progress(i, total, sheet.name)
-        try:
-            data = client.chat_json(P.SYSTEM, P.build_user_prompt(sheet), P.SCHEMA)
-            valid_fields = {fi.name for fi in sheet.field_items if fi.type != "FieldItem::Note"}
-            for cp in data.get("check_points", []):
-                # ターゲットフィールドが特定されていないチェックは除外
-                tgt = cp.get("target_fields")
-                if not tgt or (isinstance(tgt, list) and not [t for t in tgt if t]):
-                    continue
-                # フォームに存在しない field を参照している (AI のハルシネーション) は除外
-                referenced = re.findall(r"field\d+", " ".join(tgt) if isinstance(tgt, list) else str(tgt))
-                if referenced and any(f not in valid_fields for f in referenced):
-                    continue
-                if not referenced:
-                    continue
-                out.append({"sheet": sheet.name, **cp})
-        except Exception as e:
+    total_steps = 3
+    if on_progress:
+        on_progress(1, total_steps, "AIで記入漏れ・整合性を抽出中")
+
+    # --- AI: 記入漏れ + 整合性 ---
+    try:
+        data = client.chat_json(
+            P.SYSTEM,
+            P.build_study_prompt(study, selected_sheet_names),
+            P.SCHEMA,
+        )
+        sheet_field_map = {
+            s.name: {fi.name for fi in s.field_items if fi.type != "FieldItem::Note"}
+            for s in study.sheets
+        }
+        for cp in data.get("check_points", []):
+            sheet_name = cp.get("sheet_name", "")
+            if sheet_name not in sheet_field_map:
+                continue
+            tgt = cp.get("target_fields")
+            if not tgt or (isinstance(tgt, list) and not [t for t in tgt if t]):
+                continue
+            tgt_str = " ".join(tgt) if isinstance(tgt, list) else str(tgt)
+            referenced = re.findall(r"field\d+", tgt_str)
+            if not referenced:
+                continue
+            if any(f not in sheet_field_map[sheet_name] for f in referenced):
+                continue
             out.append(
                 {
-                    "sheet": sheet.name,
-                    "category": "(error)",
-                    "target_fields": [],
-                    "check_point": f"生成エラー: {e}",
-                    "rationale": "",
-                    "severity": "low",
+                    "sheet": sheet_name,
+                    "category": cp.get("category", ""),
+                    "target_fields": tgt,
+                    "check_point": cp.get("check_point", ""),
+                    "rationale": cp.get("rationale", ""),
+                    "severity": cp.get("severity", "medium"),
                 }
             )
+    except Exception as e:
+        out.append(
+            {
+                "sheet": "(error)",
+                "category": "(error)",
+                "target_fields": [],
+                "check_point": f"AI生成エラー: {e}",
+                "rationale": "",
+                "severity": "low",
+            }
+        )
 
-    # フォーム横断チェック (決定論)
+    # --- 決定論: 単位・桁数 ---
+    if on_progress:
+        on_progress(2, total_steps, "単位・桁数チェックを展開中")
+    out.extend(generate_unit_digit_checks(study, selected_sheet_names))
+
+    # --- 決定論: フォーム横断 ---
+    if on_progress:
+        on_progress(3, total_steps, "フォーム横断チェックを展開中")
     out.extend(generate_cross_sheet_checks(study, selected_sheet_names))
 
     # 並び順: シート順 → カテゴリ順 (横断は末尾)
@@ -103,6 +133,31 @@ def generate_check_points(
             CATEGORY_ORDER.get(cp.get("category", ""), 99),
         )
     )
+    return out
+
+
+def generate_unit_digit_checks(study: Study, selected_sheet_names: list[str]) -> list[dict]:
+    """numericality 制約のある数値項目に対し、単位・桁数の目視確認チェックを生成。"""
+    selected = set(selected_sheet_names)
+    out: list[dict] = []
+    for sheet in study.sheets:
+        if sheet.name not in selected:
+            continue
+        for fi in sheet.field_items:
+            if fi.type == "FieldItem::Note" or not fi.field_type:
+                continue
+            if fi.validators.numericality is None:
+                continue
+            out.append(
+                {
+                    "sheet": sheet.name,
+                    "category": "単位・桁数",
+                    "target_fields": [f"{fi.label}({fi.name})"],
+                    "check_point": f"{fi.label} の単位・桁数の妥当性を確認する (例: mg/g 取り違え、桁ずれ)。",
+                    "rationale": "numericality 範囲内でも単位・桁数の入力誤りはバリデーションで検出できないため。",
+                    "severity": "medium",
+                }
+            )
     return out
 
 
