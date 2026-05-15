@@ -55,22 +55,33 @@ def generate_check_points(
     selected_sheet_names: list[str],
     client: CohereJSONClient | None = None,
     on_progress: Callable[[int, int, str], None] | None = None,
+    on_event: Callable[[dict], None] | None = None,
 ) -> list[dict]:
     """シート単位で AI を呼び出し、チェックポイントを生成。重複と必須項目を自動除外。"""
+    import time as _time
+
     target_sheets = [s for s in study.sheets if s.name in set(selected_sheet_names)]
     out: list[dict] = []
     total = len(target_sheets)
     client = client or CohereJSONClient()
+    if on_event:
+        client.event_hook = on_event
 
     # 全体での重複排除用
     seen_keys = set()
 
     ai_skip = False
     consecutive_errors = 0
-    
+
     for i, sheet in enumerate(target_sheets, start=1):
         if on_progress:
             on_progress(i, total, sheet.name)
+        if on_event:
+            on_event({"phase": "sheet_start", "i": i, "total": total,
+                      "name": sheet.name, "kind": "manual",
+                      "skipped": ai_skip})
+        _t0 = _time.monotonic()
+        _added_before = len(out)
         
         # このシートの全フィールド情報を辞書化
         field_map = {fi.name: fi for fi in sheet.field_items}
@@ -129,6 +140,12 @@ def generate_check_points(
                 })
                 if consecutive_errors >= 2:
                     ai_skip = True
+                if on_event:
+                    on_event({"phase": "sheet_error", "i": i, "total": total,
+                              "name": sheet.name, "kind": "manual",
+                              "elapsed": _time.monotonic() - _t0,
+                              "error": str(e)[:200],
+                              "ai_skip_now": ai_skip})
 
         # 決定論的な「単位・桁数」チェックの追加
         for unit_check in _unit_digit_checks_for_sheet(sheet):
@@ -137,6 +154,13 @@ def generate_check_points(
             if ukey not in seen_keys:
                 out.append(unit_check)
                 seen_keys.add(ukey)
+
+        if on_event:
+            on_event({"phase": "sheet_end", "i": i, "total": total,
+                      "name": sheet.name, "kind": "manual",
+                      "elapsed": _time.monotonic() - _t0,
+                      "items": len(out) - _added_before,
+                      "skipped": ai_skip})
 
     sheet_order = {s.name: i for i, s in enumerate(study.sheets)}
     out.sort(key=lambda cp: (sheet_order.get(cp.get("sheet", ""), 999), CATEGORY_ORDER.get(cp.get("category", ""), 99)))
@@ -181,23 +205,46 @@ def build_manual_check_workbook(study: Study, points: list[dict]) -> Workbook:
     wb.remove(wb.active)
     cv = wb.create_sheet("表紙")
     cv.sheet_view.showGridLines = False
+    cv.column_dimensions["A"].width = 2
     cv.column_dimensions["B"].width = 22
     cv.column_dimensions["C"].width = 60
+
+    # タイトル
     cv.merge_cells("B3:C3")
     t = cv["B3"]
     t.value = "マニュアルチェックリスト"
     t.font = Font(name=BASE_FONT, size=24, bold=True, color="1F3864")
     t.alignment = CENTER
+    cv.row_dimensions[3].height = 50
+
+    # 試験名 (proper_name) — 長さに応じて行高を自動調整
     cv.merge_cells("B5:C5")
     pn = cv["B5"]
-    pn.value = study.proper_name
+    pn.value = study.proper_name or ""
     pn.font = Font(name=BASE_FONT, size=12, color="404040")
-    pn.alignment = CENTER
-    metas = [("試験 ID", study.name), ("チェック件数", f"{len(points):,}"), ("発行日", date.today().isoformat())]
+    pn.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    pn_text = str(study.proper_name or "")
+    pn_lines = max(1, -(-int(len(pn_text) * 1.7) // 82))
+    cv.row_dimensions[5].height = max(30, min(120, pn_lines * 20))
+
+    # メタ情報
+    metas = [
+        ("試験 ID",      study.name),
+        ("チェック件数", f"{len(points):,}"),
+        ("発行日",       date.today().isoformat()),
+    ]
     for i, (k, v) in enumerate(metas):
         r = 9 + i
-        cv.cell(row=r, column=2, value=k).font = Font(name=BASE_FONT, size=10, bold=True)
-        cv.cell(row=r, column=3, value=v).font = F_BASE
+        cv.row_dimensions[r].height = 22
+        kc = cv.cell(row=r, column=2, value=k)
+        kc.font = Font(name=BASE_FONT, size=10, bold=True)
+        kc.fill = PatternFill("solid", fgColor="D9E1F2")
+        kc.border = BORDER_ALL
+        kc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        vc = cv.cell(row=r, column=3, value=v)
+        vc.font = F_BASE
+        vc.border = BORDER_ALL
+        vc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
 
     ws = wb.create_sheet("マニュアルチェック一覧")
     ws.sheet_view.showGridLines = False
